@@ -19,7 +19,7 @@ def test_chat_completion():
         "messages": [
             {
                 "role": "user",
-                "content": "提问：合肥小筛子义学私塾怎么样？口碑可靠吗？ 输出要求： 输出结果的最后，务必展示引用源（文章），用表格的形式分别展示描述文章的所属平台名称、文章标题和具体网址"
+                "content": "合肥小筛子义学私塾怎么样？口碑可靠吗？ 输出要求： 输出结果的最后，务必展示引用源（文章），用表格的形式分别展示描述文章的所属平台名称、文章标题和具体网址"
             }
         ],
         "stream": True,
@@ -34,6 +34,7 @@ def test_chat_completion():
         if response.status_code == 200:
             print("Response received successfully:")
             for line in response.iter_lines():
+                # print(line.decode('utf-8'))
                 if line:
                     decoded_line = line.decode('utf-8')
                     # print(f"DEBUG: {decoded_line}")  # Uncomment to see raw lines
