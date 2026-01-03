@@ -28,16 +28,16 @@ export default {
             const tokens = chat.tokenSplit(request.headers.authorization);
             // 随机挑选一个token
             const token = _.sample(tokens);
-            let { model, conversation_id: convId, messages, stream } = request.body;
+            let { model, conversation_id: convId, messages, stream, thinking_enabled, search_enabled } = request.body;
             model = model.toLowerCase();
             if (stream) {
-                const stream = await chat.createCompletionStream(model, messages, token, convId);
+                const stream = await chat.createCompletionStream(model, messages, token, convId, 0, thinking_enabled, search_enabled);
                 return new Response(stream, {
                     type: "text/event-stream"
                 });
             }
             else
-                return await chat.createCompletion(model, messages, token, convId);
+                return await chat.createCompletion(model, messages, token, convId, 0, thinking_enabled, search_enabled);
         }
 
     }

@@ -234,7 +234,9 @@ async function createCompletion(
   messages: any[],
   refreshToken: string,
   refConvId?: string,
-  retryCount = 0
+  retryCount = 0,
+  thinkingEnabled = false,
+  searchEnabled = false
 ) {
   return (async () => {
     logger.info(messages);
@@ -252,13 +254,9 @@ async function createCompletion(
     // 请求流
     const token = await acquireToken(refreshToken);
 
-    const isSearchModel = model.includes('search') || prompt.includes('联网搜索');
-    const isThinkingModel = model.includes('think') || model.includes('r1') || prompt.includes('深度思考');
-
-    // 已经支持同时使用，此处注释
-    // if(isSearchModel && isThinkingModel)
-    //   throw new APIException(EX.API_REQUEST_FAILED, '深度思考和联网搜索不能同时使用');
-
+    const isSearchModel = searchEnabled || model.includes('search') || prompt.includes('联网搜索');
+    const isThinkingModel = thinkingEnabled || model.includes('think') || model.includes('r1') || prompt.includes('深度思考');
+ 
     if (isThinkingModel) {
       const thinkingQuota = await getThinkingQuota(refreshToken);
       if (thinkingQuota <= 0) {
@@ -310,7 +308,7 @@ async function createCompletion(
 
     const streamStartTime = util.timestamp();
     // 接收流为输出文本
-    const answer = await receiveStream(model, result.data, sessionId);
+    const answer = await receiveStream(model, result.data, sessionId, thinkingEnabled, searchEnabled);
     logger.success(
       `Stream has completed transfer ${util.timestamp() - streamStartTime}ms`
     );
@@ -327,7 +325,9 @@ async function createCompletion(
           messages,
           refreshToken,
           refConvId,
-          retryCount + 1
+          retryCount + 1,
+          thinkingEnabled,
+          searchEnabled
         );
       })();
     }
@@ -349,7 +349,9 @@ async function createCompletionStream(
   messages: any[],
   refreshToken: string,
   refConvId?: string,
-  retryCount = 0
+  retryCount = 0,
+  thinkingEnabled = false,
+  searchEnabled = false
 ) {
   return (async () => {
     logger.info(messages);
@@ -364,8 +366,8 @@ async function createCompletionStream(
     // 解析引用对话ID
     const [refSessionId, refParentMsgId] = refConvId?.split('@') || [];
 
-    const isSearchModel = model.includes('search') || prompt.includes('联网搜索');
-    const isThinkingModel = model.includes('think') || model.includes('r1') || prompt.includes('深度思考');
+    const isSearchModel = searchEnabled || model.includes('search') || prompt.includes('联网搜索');
+    const isThinkingModel = thinkingEnabled || model.includes('think') || model.includes('r1') || prompt.includes('深度思考');
 
     // 已经支持同时使用，此处注释
     // if(isSearchModel && isThinkingModel)
@@ -448,7 +450,7 @@ async function createCompletionStream(
       logger.success(
         `Stream has completed transfer ${util.timestamp() - streamStartTime}ms`
       );
-    });
+    }, thinkingEnabled, searchEnabled);
   })().catch((err) => {
     if (retryCount < MAX_RETRY_COUNT) {
       logger.error(`Stream response error: ${err.stack}`);
@@ -460,7 +462,9 @@ async function createCompletionStream(
           messages,
           refreshToken,
           refConvId,
-          retryCount + 1
+          retryCount + 1,
+          thinkingEnabled,
+          searchEnabled
         );
       })();
     }
@@ -546,10 +550,10 @@ function checkResult(result: AxiosResponse, refreshToken: string) {
  * @param model 模型名称
  * @param stream 消息流
  */
-async function receiveStream(model: string, stream: any, refConvId?: string): Promise<any> {
+async function receiveStream(model: string, stream: any, refConvId?: string, thinkingEnabled = false, searchEnabled = false): Promise<any> {
   let thinking = false;
-  const isSearchModel = model.includes('search');
-  const isThinkingModel = model.includes('think') || model.includes('r1');
+  let isSearchModel = searchEnabled || model.includes('search');
+  let isThinkingModel = thinkingEnabled || model.includes('think') || model.includes('r1');
   const isSilentModel = model.includes('silent');
   const isFoldModel = model.includes('fold');
   logger.info(`模型: ${model}, 是否思考: ${isThinkingModel} 是否联网搜索: ${isSearchModel}, 是否静默思考: ${isSilentModel}, 是否折叠思考: ${isFoldModel}`);
@@ -571,6 +575,7 @@ async function receiveStream(model: string, stream: any, refConvId?: string): Pr
       created: util.unixTimestamp(),
     };
     const parser = createParser((event) => {
+      logger.info(`event: ${JSON.stringify(event)}`);
       try {
         if (event.type !== "event" || event.data.trim() == "[DONE]") return;
         // 解析JSON
@@ -579,6 +584,14 @@ async function receiveStream(model: string, stream: any, refConvId?: string): Pr
           throw new Error(`Stream response invalid: ${event.data}`);
         if (!result.choices || !result.choices[0] || !result.choices[0].delta)
           return;
+        // 适配新版API格式
+        if (result.v && result.v.response) {
+            const { thinking_enabled, search_enabled } = result.v.response;
+            if (_.isBoolean(thinking_enabled)) isThinkingModel = thinking_enabled;
+            if (_.isBoolean(search_enabled)) isSearchModel = search_enabled;
+            logger.info(`[初始化] 是否思考: ${isThinkingModel}, 是否联网搜索: ${isSearchModel}`);
+            return;
+        }
         if (!data.id)
           data.id = `${refConvId}@${result.message_id}`;
         if (result.choices[0].delta.type === "search_result" && !isSilentModel) {
@@ -630,10 +643,10 @@ async function receiveStream(model: string, stream: any, refConvId?: string): Pr
  * @param stream 消息流
  * @param endCallback 传输结束回调
  */
-function createTransStream(model: string, stream: any, refConvId: string, endCallback?: Function) {
+function createTransStream(model: string, stream: any, refConvId: string, endCallback?: Function, thinkingEnabled = false, searchEnabled = false) {
   let thinking = false;
-  const isSearchModel = model.includes('search');
-  const isThinkingModel = model.includes('think') || model.includes('r1');
+  let isSearchModel = searchEnabled || model.includes('search');
+  let isThinkingModel = thinkingEnabled || model.includes('think') || model.includes('r1');
   const isSilentModel = model.includes('silent');
   const isFoldModel = model.includes('fold');
   logger.info(`模型: ${model}, 是否思考: ${isThinkingModel}, 是否联网搜索: ${isSearchModel}, 是否静默思考: ${isSilentModel}, 是否折叠思考: ${isFoldModel}`);
@@ -658,12 +671,59 @@ function createTransStream(model: string, stream: any, refConvId: string, endCal
       })}\n\n`
     );
   const parser = createParser((event) => {
+    logger.info(`event: ${JSON.stringify(event)}`);
     try {
       if (event.type !== "event" || event.data.trim() == "[DONE]") return;
       // 解析JSON
       const result = _.attempt(() => JSON.parse(event.data));
       if (_.isError(result))
         throw new Error(`Stream response invalid: ${event.data}`);
+      // 适配新版API格式
+      if (result.v && result.v.response) {
+        const { thinking_enabled, search_enabled } = result.v.response;
+        if (_.isBoolean(thinking_enabled)) isThinkingModel = thinking_enabled;
+        if (_.isBoolean(search_enabled)) isSearchModel = search_enabled;
+        logger.info(`[初始化] 是否思考: ${isThinkingModel}, 是否联网搜索: ${isSearchModel}`);
+        return;
+      }
+      if (result.v && _.isString(result.v)) {
+        transStream.write(`data: ${JSON.stringify({
+            id: `${refConvId}@${util.uuid()}`, 
+            model: model,
+            object: "chat.completion.chunk",
+            choices: [
+              {
+                index: 0,
+                delta: { role: "assistant", content: result.v },
+                finish_reason: null,
+              },
+            ],
+            created,
+          })}\n\n`);
+          return;
+      }
+      if (result.p === "response" && result.o === "BATCH" && Array.isArray(result.v)) {
+          const statusItem = result.v.find((item: any) => item.p === "status");
+          if (statusItem && statusItem.v === "FINISHED") {
+              transStream.write(`data: ${JSON.stringify({
+                  id: `${refConvId}@${util.uuid()}`,
+                  model: model,
+                  object: "chat.completion.chunk",
+                  choices: [
+                    {
+                      index: 0,
+                      delta: { role: "assistant", content: "" },
+                      finish_reason: "stop"
+                    },
+                  ],
+                  created,
+                })}\n\n`);
+              !transStream.closed && transStream.end("data: [DONE]\n\n");
+              endCallback && endCallback();
+              return;
+          }
+      }
+
       if (!result.choices || !result.choices[0] || !result.choices[0].delta)
         return;
       result.model = model;
