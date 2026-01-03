@@ -855,8 +855,8 @@ async function getTokenLiveStatus(refreshToken: string) {
     }
   );
   try {
-    const { token } = checkResult(result, refreshToken);
-    return !!token;
+    const { biz_data } = checkResult(result, refreshToken);
+    return !!biz_data;
   }
   catch (err) {
     return false;
