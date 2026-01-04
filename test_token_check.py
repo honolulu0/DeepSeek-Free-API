@@ -3,7 +3,7 @@ import json
 import sys
 
 # Configuration
-BASE_URL = "http://localhost:8000"
+BASE_URL = "http://101.201.214.215:8000"
 API_ENDPOINT = "/token/check"
 
 # Default token to test (can be overridden by command line argument)

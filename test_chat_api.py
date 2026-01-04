@@ -2,7 +2,7 @@ import requests
 import json
 
 # Configuration
-BASE_URL = "http://localhost:8000"
+BASE_URL = "http://101.201.214.215:8000"
 API_ENDPOINT = "/v1/chat/completions"
 TOKEN = "3CQdrZNAIXDE6lG9PSEBkXRgQir3S5Mc7P5+BWG/8H3+SPDMX8BIHU/umXztvQQf"
 
