@@ -307,8 +307,10 @@ async function createCompletion(
     }
 
     const streamStartTime = util.timestamp();
-    // 接收流为输出文本
-    const answer = await receiveStream(model, result.data, sessionId, thinkingEnabled, searchEnabled);
+    // 先用 createTransStream 转换为 OpenAI 格式，再接收
+    const transStream = createTransStream(model, result.data, sessionId, null, thinkingEnabled, searchEnabled);
+    // 接收转换后的流为输出文本
+    const answer = await receiveStream(model, transStream, sessionId, thinkingEnabled, searchEnabled);
     logger.success(
       `Stream has completed transfer ${util.timestamp() - streamStartTime}ms`
     );
@@ -548,20 +550,18 @@ function checkResult(result: AxiosResponse, refreshToken: string) {
  * 从流接收完整的消息内容
  *
  * @param model 模型名称
- * @param stream 消息流
+ * @param stream 消息流（已转换为 OpenAI 兼容格式）
  */
 async function receiveStream(model: string, stream: any, refConvId?: string, thinkingEnabled = false, searchEnabled = false): Promise<any> {
-  let thinking = false;
-  let isSearchModel = searchEnabled || model.includes('search');
-  let isThinkingModel = thinkingEnabled || model.includes('think') || model.includes('r1');
   const isSilentModel = model.includes('silent');
   const isFoldModel = model.includes('fold');
-  logger.info(`模型: ${model}, 是否思考: ${isThinkingModel} 是否联网搜索: ${isSearchModel}, 是否静默思考: ${isSilentModel}, 是否折叠思考: ${isFoldModel}`);
+  let searchResultsList: any[] = [];
   let refContent = '';
+  
   return new Promise((resolve, reject) => {
     // 消息初始化
     const data = {
-      id: "",
+      id: `chatcmpl-${util.uuid()}`,
       model,
       object: "chat.completion",
       choices: [
@@ -573,64 +573,80 @@ async function receiveStream(model: string, stream: any, refConvId?: string, thi
       ],
       usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
       created: util.unixTimestamp(),
+      search_results: [] as any[],
     };
+    
     const parser = createParser((event) => {
-      logger.info(`event: ${JSON.stringify(event)}`);
       try {
-        if (event.type !== "event" || event.data.trim() == "[DONE]") return;
+        if (event.type !== "event") return;
+        if (event.data.trim() === "[DONE]") {
+          // 流结束，处理最终内容
+          data.choices[0].message.content = data.choices[0].message.content
+            .replace(/^\n+/, '')
+            .replace(/\[citation:\d+\]/g, '') + 
+            (refContent ? `\n\n搜索结果来自：\n${refContent}` : '');
+          data.search_results = searchResultsList;
+          resolve(data);
+          return;
+        }
+        
         // 解析JSON
         const result = _.attempt(() => JSON.parse(event.data));
         if (_.isError(result))
           throw new Error(`Stream response invalid: ${event.data}`);
+        
         if (!result.choices || !result.choices[0] || !result.choices[0].delta)
           return;
-        // 适配新版API格式
-        if (result.v && result.v.response) {
-            const { thinking_enabled, search_enabled } = result.v.response;
-            if (_.isBoolean(thinking_enabled)) isThinkingModel = thinking_enabled;
-            if (_.isBoolean(search_enabled)) isSearchModel = search_enabled;
-            logger.info(`[初始化] 是否思考: ${isThinkingModel}, 是否联网搜索: ${isSearchModel}`);
-            return;
+        
+        const delta = result.choices[0].delta;
+        
+        // 更新 id
+        if (result.id && !data.id.includes('@')) {
+          data.id = result.id;
         }
-        if (!data.id)
-          data.id = `${refConvId}@${result.message_id}`;
-        if (result.choices[0].delta.type === "search_result" && !isSilentModel) {
-          const searchResults = result.choices[0]?.delta?.search_results || [];
-          refContent += searchResults.map(item => `${item.title} - ${item.url}`).join('\n');
+        
+        // 处理搜索结果
+        if (delta.search_result && Array.isArray(delta.search_result)) {
+          logger.info(`[receiveStream] 收到搜索结果: ${delta.search_result.length} 条`);
+          searchResultsList = delta.search_result;
+          if (!isSilentModel) {
+            refContent = searchResultsList.map((item: any) => `${item.title} - ${item.url}`).join('\n');
+          }
           return;
         }
-        if (isFoldModel && result.choices[0].delta.type === "thinking") {
-          if (!thinking && isThinkingModel && !isSilentModel) {
-            thinking = true;
-            data.choices[0].message.content += isFoldModel ? "<details><summary>思考过程</summary><pre>" : "[思考开始]\n";
+        
+        // 处理思考内容
+        if (delta.reasoning_content) {
+          if (!isSilentModel) {
+            data.choices[0].message.reasoning_content += delta.reasoning_content;
           }
-          if (isSilentModel)
-            return;
+          return;
         }
-        else if (isFoldModel && thinking && isThinkingModel && !isSilentModel) {
-          thinking = false;
-          data.choices[0].message.content += isFoldModel ? "</pre></details>" : "\n\n[思考结束]\n";
+        
+        // 处理正文内容
+        if (delta.content) {
+          data.choices[0].message.content += delta.content;
         }
-        if (result.choices[0].delta.content) {
-          if(result.choices[0].delta.type === "thinking" && !isFoldModel){
-            data.choices[0].message.reasoning_content += result.choices[0].delta.content;
-          }else {
-            data.choices[0].message.content += result.choices[0].delta.content;
-          }
-        }
-        if (result.choices && result.choices[0] && result.choices[0].finish_reason === "stop") {
-          data.choices[0].message.content = data.choices[0].message.content.replace(/^\n+/, '').replace(/\[citation:\d+\]/g, '') + (refContent ? `\n\n搜索结果来自：\n${refContent}` : '');
-          resolve(data);
-        }
+        
       } catch (err) {
         logger.error(err);
         reject(err);
       }
     });
+    
     // 将流数据喂给SSE转换器
     stream.on("data", (buffer) => parser.feed(buffer.toString()));
     stream.once("error", (err) => reject(err));
-    stream.once("close", () => resolve(data));
+    stream.once("close", () => {
+      // 流关闭时也要处理最终内容
+      data.choices[0].message.content = data.choices[0].message.content
+        .replace(/^\n+/, '')
+        .replace(/\[citation:\d+\]/g, '') + 
+        (refContent ? `\n\n搜索结果来自：\n${refContent}` : '');
+      data.search_results = searchResultsList;
+      logger.info(`[receiveStream] 最终搜索结果数量: ${searchResultsList.length}`);
+      resolve(data);
+    });
   });
 }
 

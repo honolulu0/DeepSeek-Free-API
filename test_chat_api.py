@@ -3,6 +3,7 @@ import json
 
 # Configuration
 BASE_URL = "http://101.201.214.215:8000"
+# BASE_URL = "http://localhost:8000"
 API_ENDPOINT = "/v1/chat/completions"
 TOKEN = "3CQdrZNAIXDE6lG9PSEBkXRgQir3S5Mc7P5+BWG/8H3+SPDMX8BIHU/umXztvQQf"
 
@@ -22,7 +23,7 @@ def test_chat_completion():
                 "content": "合肥小筛子义学私塾怎么样？口碑可靠吗？ 输出要求： 输出结果的最后，务必展示引用源（文章），用表格的形式分别展示描述文章的所属平台名称、文章标题和具体网址"
             }
         ],
-        "stream": True,
+        "stream": False,
         "thinking_enabled": True,
         "search_enabled": True
     }
