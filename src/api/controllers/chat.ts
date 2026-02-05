@@ -1283,27 +1283,57 @@ async function getThinkingQuota(refreshToken: string) {
 
 /**
  * 获取版本号
+ * 从 DeepSeek 前端 JS 文件中提取 appVersion
  */
 async function fetchAppVersion(): Promise<string> {
   try {
     logger.info('自动获取版本号');
-    const response = await axios.get('https://chat.deepseek.com/version.txt', {
-      timeout: 5000,
+    // 先获取主页 HTML，找到 main.js 的文件名
+    const htmlResponse = await axios.get('https://chat.deepseek.com/', {
+      timeout: 10000,
       validateStatus: () => true,
       headers: {
         ...FAKE_HEADERS,
         Cookie: generateCookie()
       }
     });
-    if (response.status === 200 && response.data) {
-      const version = response.data.toString().trim();
+    
+    if (htmlResponse.status !== 200) {
+      throw new Error('获取主页失败');
+    }
+    
+    // 从 HTML 中提取 main.js 的 URL
+    const mainJsMatch = htmlResponse.data.match(/src="(https:\/\/fe-static\.deepseek\.com\/chat\/static\/main\.[^"]+\.js)"/);
+    if (!mainJsMatch) {
+      throw new Error('未找到 main.js');
+    }
+    
+    const mainJsUrl = mainJsMatch[1];
+    logger.info(`找到 main.js: ${mainJsUrl}`);
+    
+    // 获取 main.js 内容
+    const jsResponse = await axios.get(mainJsUrl, {
+      timeout: 15000,
+      validateStatus: () => true,
+    });
+    
+    if (jsResponse.status !== 200) {
+      throw new Error('获取 main.js 失败');
+    }
+    
+    // 从 JS 中提取 appVersion
+    const versionMatch = jsResponse.data.match(/appVersion:"(\d{8}\.\d+)"/);
+    if (versionMatch && versionMatch[1]) {
+      const version = versionMatch[1];
       logger.info(`获取版本号: ${version}`);
       return version;
     }
+    
+    throw new Error('未找到 appVersion');
   } catch (err) {
     logger.error('获取版本号失败:', err);
   }
-  return "20241018.0";
+  return "20241129.1";
 }
 
 function autoUpdateAppVersion() {
