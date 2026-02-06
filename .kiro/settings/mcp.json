@@ -1,0 +1,35 @@
+{
+  "mcpServers": {
+    "ssh-test-121.43.118.214": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "ssh-mcp",
+        "--",
+        "--host=121.43.118.214",
+        "--port=22",
+        "--user=root",
+        "--password=8uhb(IJN"
+      ],
+      "disabled": true,
+      "autoApprove": []
+    },
+    "ssh-prod-8.147.58.127": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "ssh-mcp",
+        "--",
+        "--host=8.147.58.127",
+        "--port=22",
+        "--user=root",
+        "--password=3edc$RFV"
+      ],
+      "disabled": false,
+      "autoApprove": [
+        "exec",
+        "sudo-exec"
+      ]
+    }
+  }
+}
